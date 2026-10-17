@@ -30,9 +30,12 @@ function setup() {
   ss.setSpreadsheetTimeZone('Europe/Kyiv');
   setupTransactions_(ss);
   setupConfig_(ss);
-  setupSummary_(ss, 'Тижні', 'I', 'Тиждень');
-  setupSummary_(ss, 'Місяці', 'J', 'Місяць');
-  setupSummary_(ss, 'Роки', 'K', 'Рік');
+  rebuildSummaries();
+}
+
+/** Меню «Фінанси» у таблиці: ручне оновлення зведення. */
+function onOpen() {
+  SpreadsheetApp.getUi().createMenu('Фінанси').addItem('Оновити зведення', 'rebuildSummaries').addToUi();
 }
 
 function setupTransactions_(ss) {
@@ -42,6 +45,28 @@ function setupTransactions_(ss) {
   sh.getRange('B2:B').setNumberFormat('yyyy-mm-dd');
   sh.getRange('C2:C').setNumberFormat('#,##0.00');
   sh.getRange('H2:H').setNumberFormat('yyyy-mm-dd hh:mm');
+  // Ключі періодів — лише текст, інакше «2026-10» Sheets перетворить на дату.
+  sh.getRange('I2:K').setNumberFormat('@');
+}
+
+/**
+ * Запусти вручну після імпорту CSV: заповнює Тиждень/Місяць/Рік для рядків, де вони порожні.
+ */
+function recomputeKeys() {
+  const sh = txSheet_();
+  const n = sh.getLastRow() - 1;
+  if (n < 1) return;
+  normalizeTypes_(sh, n);
+  sh.getRange('I2:K').setNumberFormat('@');
+  const dates = sh.getRange(2, COL.DATE, n, 1).getValues();
+  const keys = sh.getRange(2, COL.WEEK, n, 3).getValues();
+  const out = keys.map(function (k, i) {
+    const d = dates[i][0];
+    if (!(d instanceof Date) || (k[0] && k[1] && k[2])) return k;
+    return [isoWeekKey_(d), Utilities.formatDate(d, tz_(), 'yyyy-MM'), Utilities.formatDate(d, tz_(), 'yyyy')];
+  });
+  sh.getRange(2, COL.WEEK, n, 3).setValues(out);
+  rebuildSummaries();
 }
 
 function setupConfig_(ss) {
@@ -56,21 +81,95 @@ function setupConfig_(ss) {
   sh.setColumnWidths(1, 3, 160);
 }
 
-function setupSummary_(ss, name, keyCol, label) {
-  const sh = ss.getSheetByName(name) || ss.insertSheet(name);
-  sh.clear();
-  const src = SHEET_TX + '!A2:K';
-  const empty = '"Поки немає даних"';
-  const totals = 'select ' + keyCol + ', sum(C) where ' + keyCol + " is not null group by " + keyCol +
-    " order by " + keyCol + " desc label " + keyCol + " '" + label + "', sum(C) 'Всього, грн'";
-  const pivot = 'select ' + keyCol + ', sum(C) where ' + keyCol + " is not null group by " + keyCol +
-    " pivot D order by " + keyCol + " desc label " + keyCol + " '" + label + "'";
-  sh.getRange('A1').setFormula('=IFERROR(QUERY(' + src + ',"' + totals + '",0),' + empty + ')');
-  sh.getRange('D1').setFormula('=IFERROR(QUERY(' + src + ',"' + pivot + '",0),"")');
-  sh.getRange('1:1').setFontWeight('bold');
-  sh.setFrozenRows(1);
-  sh.getRange('B2:B').setNumberFormat('#,##0.00');
-  sh.getRange('E2:Z').setNumberFormat('#,##0.00');
+// ---------- Зведення (тижні / місяці / роки) ----------
+
+const SUMMARIES = [
+  { sheet: 'Тижні', label: 'Тиждень', key: function (d) { return isoWeekKey_(d); } },
+  { sheet: 'Місяці', label: 'Місяць', key: function (d) { return Utilities.formatDate(d, tz_(), 'yyyy-MM'); } },
+  { sheet: 'Роки', label: 'Рік', key: function (d) { return Utilities.formatDate(d, tz_(), 'yyyy'); } },
+];
+
+/**
+ * Чиста функція: з рядків [{date, amount, category}] робить таблицю зведення.
+ * Рядки періодів — від новіших до старіших; колонки: Період, Всього, категорії.
+ */
+function aggregate_(rows, label, keyFn, cfgCategories) {
+  const periods = {};
+  const seenCats = {};
+  rows.forEach(function (r) {
+    const k = keyFn(r.date);
+    const p = periods[k] || (periods[k] = { total: 0, cats: {} });
+    p.total += r.amount;
+    p.cats[r.category] = (p.cats[r.category] || 0) + r.amount;
+    seenCats[r.category] = true;
+  });
+  const cats = cfgCategories.concat(Object.keys(seenCats).filter(function (c) { return cfgCategories.indexOf(c) < 0; }).sort());
+  const out = [[label, 'Всього, грн'].concat(cats)];
+  Object.keys(periods).sort().reverse().forEach(function (k) {
+    const p = periods[k];
+    out.push([k, round2_(p.total)].concat(cats.map(function (c) { return p.cats[c] ? round2_(p.cats[c]) : ''; })));
+  });
+  return out;
+}
+
+function round2_(x) { return Math.round(x * 100) / 100; }
+
+/** Читає Transactions і спритно переживає текстові дати/суми після імпорту. */
+function readRows_() {
+  const sh = txSheet_();
+  const n = sh.getLastRow() - 1;
+  if (n < 1) return [];
+  const vals = sh.getRange(2, 1, n, COL.CATEGORY).getValues();
+  const rows = [];
+  vals.forEach(function (r) {
+    let d = r[COL.DATE - 1];
+    if (typeof d === 'string' && /^\d{4}-\d{2}-\d{2}/.test(d.trim())) {
+      d = Utilities.parseDate(d.trim().slice(0, 10) + ' 12:00', tz_(), 'yyyy-MM-dd HH:mm');
+    }
+    let a = r[COL.AMOUNT - 1];
+    if (typeof a === 'string') a = Number(a.replace(/\s/g, '').replace(',', '.'));
+    if (!(d instanceof Date) || !isFinite(a) || r[COL.ID - 1] === '') return;
+    rows.push({ date: d, amount: a, category: String(r[COL.CATEGORY - 1]) || 'Інше' });
+  });
+  return rows;
+}
+
+/** Перебудовує вкладки Тижні / Місяці / Роки. Викликається після кожної зміни й вручну з меню. */
+function rebuildSummaries() {
+  const ss = SpreadsheetApp.getActive();
+  const rows = readRows_();
+  const cfgCats = readConfig_().categories;
+  SUMMARIES.forEach(function (s) {
+    const sh = ss.getSheetByName(s.sheet) || ss.insertSheet(s.sheet);
+    const table = aggregate_(rows, s.label, s.key, cfgCats);
+    sh.clear();
+    sh.getRange(1, 1, table.length, table[0].length).setValues(table);
+    sh.getRange(1, 1, 1, table[0].length).setFontWeight('bold');
+    sh.getRange(1, 1, table.length, 1).setNumberFormat('@');
+    if (table.length > 1) sh.getRange(2, 2, table.length - 1, table[0].length - 1).setNumberFormat('#,##0.00');
+    sh.setFrozenRows(1);
+    sh.setFrozenColumns(1);
+  });
+}
+
+/** Після імпорту дати й суми можуть опинитись текстом (залежить від локалі) — повертаємо їм справжні типи. */
+function normalizeTypes_(sh, n) {
+  const range = sh.getRange(2, COL.DATE, n, 2); // колонки Дата і Сума
+  const out = range.getValues().map(function (r) {
+    let d = r[0];
+    let a = r[1];
+    if (typeof d === 'string' && /^\d{4}-\d{2}-\d{2}/.test(d.trim())) {
+      d = Utilities.parseDate(d.trim().slice(0, 10) + ' 12:00', tz_(), 'yyyy-MM-dd HH:mm');
+    }
+    if (typeof a === 'string') {
+      const x = Number(a.replace(/\s/g, '').replace(',', '.'));
+      if (isFinite(x)) a = x;
+    }
+    return [d, a];
+  });
+  range.setValues(out);
+  sh.getRange(2, COL.DATE, n, 1).setNumberFormat('yyyy-mm-dd');
+  sh.getRange(2, COL.AMOUNT, n, 1).setNumberFormat('#,##0.00');
 }
 
 // ---------- Web app ----------
@@ -210,6 +309,7 @@ function addTx_(item) {
   const sh = txSheet_();
   const row = sh.getLastRow() + 1;
   sh.getRange(row, 1, 1, TX_HEADERS.length).setValues([rowValues_(id, v, new Date())]);
+  refreshSummaries_();
   return { ok: true, id: id };
 }
 
@@ -220,6 +320,7 @@ function updateTx_(item) {
   const sh = txSheet_();
   const created = sh.getRange(row, COL.CREATED).getValue();
   sh.getRange(row, 1, 1, TX_HEADERS.length).setValues([rowValues_(item.id, v, created)]);
+  refreshSummaries_();
   return { ok: true, id: item.id };
 }
 
@@ -227,5 +328,11 @@ function deleteTx_(id) {
   const row = findRow_(id);
   if (!row) throw new Error('not_found');
   txSheet_().deleteRow(row);
+  refreshSummaries_();
   return { ok: true };
+}
+
+/** Зведення не повинні ламати збереження витрати: помилку лише логуємо. */
+function refreshSummaries_() {
+  try { rebuildSummaries(); } catch (err) { console.error('rebuildSummaries: ' + err); }
 }
