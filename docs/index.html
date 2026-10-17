@@ -77,10 +77,19 @@
       <div id="history-list"></div>
       <p id="history-empty" class="muted" hidden>Поки немає витрат.</p>
     </section>
+
+    <!-- План -->
+    <section id="view-plan" hidden>
+      <h1>План</h1>
+      <p id="plan-total" class="total"></p>
+      <div id="plan-list"></div>
+      <p id="plan-empty" class="muted" hidden>Список порожній. Додай перший рядок у будь-якій категорії.</p>
+    </section>
   </main>
 
   <nav id="tabs" hidden>
     <button data-tab="add" class="active">Додати</button>
+    <button data-tab="plan">План</button>
     <button data-tab="history">Історія</button>
   </nav>
   <div id="toast" role="status" aria-live="polite" hidden></div>

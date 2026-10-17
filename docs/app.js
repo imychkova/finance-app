@@ -11,7 +11,7 @@ const store = {
 };
 const readJson = (k, fallback) => { try { return JSON.parse(store.get(k)) || fallback; } catch (e) { return fallback; } };
 
-const state = { config: null, items: [], form: { category: null, source: null, who: null }, editing: null };
+const state = { config: null, items: [], plan: [], form: { category: null, source: null, who: null }, editing: null };
 
 // ---------- API ----------
 
@@ -78,10 +78,11 @@ function showError(id, msg) {
 // ---------- Навігація ----------
 
 function showView(name) {
-  ['setup', 'add', 'history'].forEach((v) => { $('view-' + v).hidden = v !== name; });
+  ['setup', 'add', 'plan', 'history'].forEach((v) => { $('view-' + v).hidden = v !== name; });
   $('tabs').hidden = name === 'setup';
   document.querySelectorAll('#tabs button').forEach((b) => b.classList.toggle('active', b.dataset.tab === name));
   if (name === 'history') loadHistory();
+  if (name === 'plan') loadPlan();
   window.scrollTo(0, 0);
 }
 
@@ -300,6 +301,140 @@ function renderHistory(list) {
     b.append(main, sum);
     if (!it.queued) b.addEventListener('click', () => startEdit(it));
     list.appendChild(b);
+  });
+}
+
+// ---------- План ----------
+
+async function loadPlan() {
+  try {
+    const { items } = await api('plan_list');
+    state.plan = items;
+  } catch (err) {
+    toast(errText(err));
+  }
+  renderPlan();
+}
+
+// Зміна рядка плану: оновлюємо екран одразу, а при помилці повертаємо як було.
+async function planSave(item, action) {
+  try {
+    await api(action, { item });
+  } catch (err) {
+    toast(errText(err));
+    await loadPlan();
+  }
+}
+
+function planAdd(category, text) {
+  const item = { id: uuid(), category, text, amount: null, done: false, who: state.form.who || '' };
+  state.plan.push(item);
+  renderPlan(item.id);
+  planSave(item, 'plan_add');
+}
+
+function planRemove(item) {
+  state.plan = state.plan.filter((x) => x.id !== item.id);
+  renderPlan();
+  api('plan_delete', { id: item.id }).catch((err) => { toast(errText(err)); loadPlan(); });
+}
+
+function planRow(item) {
+  const row = document.createElement('div');
+  row.className = 'plan-row' + (item.done ? ' done' : '');
+
+  const check = document.createElement('input');
+  check.type = 'checkbox';
+  check.checked = item.done;
+  check.setAttribute('aria-label', 'Виконано');
+  check.addEventListener('change', () => {
+    item.done = check.checked;
+    renderPlan();
+    planSave(item, 'plan_update');
+  });
+
+  const text = document.createElement('input');
+  text.type = 'text';
+  text.className = 'plan-text';
+  text.maxLength = 200;
+  text.value = item.text;
+  text.setAttribute('aria-label', 'Що');
+  text.addEventListener('change', () => {
+    const v = text.value.trim();
+    if (!v) { text.value = item.text; return; }
+    item.text = v;
+    planSave(item, 'plan_update');
+  });
+
+  const sum = document.createElement('input');
+  sum.type = 'text';
+  sum.inputMode = 'decimal';
+  sum.className = 'plan-sum';
+  sum.placeholder = 'грн';
+  sum.value = item.amount == null ? '' : String(item.amount).replace('.', ',');
+  sum.setAttribute('aria-label', 'Орієнтовна сума, грн');
+  sum.addEventListener('change', () => {
+    const raw = sum.value.trim();
+    const n = raw === '' ? null : parseAmount(raw);
+    if (n !== null && (!isFinite(n) || n < 0)) { sum.value = item.amount == null ? '' : String(item.amount).replace('.', ','); return; }
+    item.amount = n === null ? null : Math.round(n * 100) / 100;
+    renderPlan();
+    planSave(item, 'plan_update');
+  });
+
+  const del = document.createElement('button');
+  del.type = 'button';
+  del.className = 'plan-del';
+  del.textContent = '×';
+  del.setAttribute('aria-label', 'Видалити');
+  del.addEventListener('click', () => planRemove(item));
+
+  row.append(check, text, sum, del);
+  return row;
+}
+
+function renderPlan(focusId) {
+  const box = $('plan-list');
+  box.textContent = '';
+  const cats = state.config ? state.config.categories.slice() : [];
+  state.plan.forEach((x) => { if (!cats.includes(x.category)) cats.push(x.category); });
+
+  const open = state.plan.filter((x) => !x.done);
+  const sum = open.reduce((s, x) => s + (x.amount || 0), 0);
+  $('plan-total').textContent = open.length ? 'Лишилось: ' + open.length + (sum ? ' · приблизно ' + fmtMoney(sum) : '') : '';
+  $('plan-empty').hidden = state.plan.length > 0;
+
+  cats.forEach((cat) => {
+    const items = state.plan.filter((x) => x.category === cat);
+    const sec = document.createElement('details');
+    sec.className = 'plan-cat';
+    sec.open = items.length > 0 || state.planOpen === cat;
+    const head = document.createElement('summary');
+    const left = items.filter((x) => !x.done).length;
+    head.textContent = cat + (items.length ? ' · ' + left + '/' + items.length : '');
+    sec.appendChild(head);
+    sec.addEventListener('toggle', () => { if (sec.open) state.planOpen = cat; });
+
+    items.filter((x) => !x.done).concat(items.filter((x) => x.done)).forEach((it) => sec.appendChild(planRow(it)));
+
+    const form = document.createElement('form');
+    form.className = 'plan-add';
+    const inp = document.createElement('input');
+    inp.type = 'text';
+    inp.maxLength = 200;
+    inp.placeholder = '+ Додати в «' + cat + '»';
+    inp.setAttribute('aria-label', 'Новий рядок: ' + cat);
+    form.appendChild(inp);
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const v = inp.value.trim();
+      if (!v) return;
+      state.planOpen = cat;
+      planAdd(cat, v);
+    });
+    sec.appendChild(form);
+    box.appendChild(sec);
+    if (state.planOpen === cat && focusId) form.querySelector('input').focus();
   });
 }
 

@@ -16,6 +16,10 @@ const DEFAULT_CONFIG = {
   people: ['Я', 'Yasilda'],
 };
 
+const SHEET_PLAN = 'План';
+const PLAN_HEADERS = ['id', 'Категорія', 'Що', 'Орієнтовна сума', 'Виконано', 'Хто', 'Створено'];
+const PCOL = { ID: 1, CATEGORY: 2, TEXT: 3, AMOUNT: 4, DONE: 5, WHO: 6, CREATED: 7 };
+
 const MAX_AMOUNT = 10000000;
 const MAX_LIST = 500;
 
@@ -188,6 +192,10 @@ function doPost(e) {
       case 'add': return json_(withLock_(function () { return addTx_(req.item); }));
       case 'update': return json_(withLock_(function () { return updateTx_(req.item); }));
       case 'delete': return json_(withLock_(function () { return deleteTx_(req.id); }));
+      case 'plan_list': return json_({ ok: true, items: listPlan_() });
+      case 'plan_add': return json_(withLock_(function () { return addPlan_(req.item); }));
+      case 'plan_update': return json_(withLock_(function () { return updatePlan_(req.item); }));
+      case 'plan_delete': return json_(withLock_(function () { return deletePlan_(req.id); }));
       default: return json_({ ok: false, error: 'unknown_action' });
     }
   } catch (err) {
@@ -335,4 +343,88 @@ function deleteTx_(id) {
 /** Зведення не повинні ламати збереження витрати: помилку лише логуємо. */
 function refreshSummaries_() {
   try { rebuildSummaries(); } catch (err) { console.error('rebuildSummaries: ' + err); }
+}
+
+// ---------- План (список покупок і справ) ----------
+
+/** Вкладка «План» створюється сама при першому зверненні. */
+function planSheet_() {
+  const ss = SpreadsheetApp.getActive();
+  let sh = ss.getSheetByName(SHEET_PLAN);
+  if (!sh) {
+    sh = ss.insertSheet(SHEET_PLAN);
+    sh.getRange(1, 1, 1, PLAN_HEADERS.length).setValues([PLAN_HEADERS]).setFontWeight('bold');
+    sh.setFrozenRows(1);
+    sh.getRange('D2:D').setNumberFormat('#,##0.00');
+    sh.getRange('G2:G').setNumberFormat('yyyy-mm-dd hh:mm');
+  }
+  return sh;
+}
+
+function listPlan_() {
+  const sh = planSheet_();
+  const n = sh.getLastRow() - 1;
+  if (n < 1) return [];
+  return sh.getRange(2, 1, n, PLAN_HEADERS.length).getValues().map(function (r) {
+    return {
+      id: r[PCOL.ID - 1],
+      category: r[PCOL.CATEGORY - 1],
+      text: r[PCOL.TEXT - 1],
+      amount: r[PCOL.AMOUNT - 1] === '' ? null : Number(r[PCOL.AMOUNT - 1]),
+      done: r[PCOL.DONE - 1] === true || r[PCOL.DONE - 1] === 'TRUE',
+      who: r[PCOL.WHO - 1],
+    };
+  }).filter(function (x) { return x.id; });
+}
+
+function findPlanRow_(id) {
+  if (!id) return 0;
+  const sh = planSheet_();
+  const n = sh.getLastRow() - 1;
+  if (n < 1) return 0;
+  const ids = sh.getRange(2, PCOL.ID, n, 1).getValues();
+  for (let i = 0; i < ids.length; i++) if (ids[i][0] === id) return i + 2;
+  return 0;
+}
+
+function validatePlan_(item) {
+  if (!item || typeof item !== 'object') throw new Error('bad_item');
+  const cfg = readConfig_();
+  if (cfg.categories.indexOf(item.category) < 0) throw new Error('bad_category');
+  const text = safeText_(item.text);
+  if (!text) throw new Error('bad_text');
+  let amount = '';
+  if (item.amount !== null && item.amount !== undefined && item.amount !== '') {
+    amount = Number(item.amount);
+    if (!isFinite(amount) || amount < 0 || amount > MAX_AMOUNT) throw new Error('bad_amount');
+    amount = Math.round(amount * 100) / 100;
+  }
+  const who = cfg.people.indexOf(item.who) >= 0 ? item.who : '';
+  return { category: item.category, text: text, amount: amount, done: item.done === true, who: who };
+}
+
+function addPlan_(item) {
+  const id = item && typeof item.id === 'string' && item.id.length >= 8 && item.id.length <= 64 ? item.id : Utilities.getUuid();
+  if (findPlanRow_(id)) return { ok: true, id: id, duplicate: true };
+  const v = validatePlan_(item);
+  const sh = planSheet_();
+  sh.getRange(sh.getLastRow() + 1, 1, 1, PLAN_HEADERS.length)
+    .setValues([[id, v.category, v.text, v.amount, v.done, v.who, new Date()]]);
+  return { ok: true, id: id };
+}
+
+function updatePlan_(item) {
+  const row = findPlanRow_(item && item.id);
+  if (!row) throw new Error('not_found');
+  const v = validatePlan_(item);
+  const sh = planSheet_();
+  sh.getRange(row, PCOL.CATEGORY, 1, 4).setValues([[v.category, v.text, v.amount, v.done]]);
+  return { ok: true, id: item.id };
+}
+
+function deletePlan_(id) {
+  const row = findPlanRow_(id);
+  if (!row) throw new Error('not_found');
+  planSheet_().deleteRow(row);
+  return { ok: true };
 }

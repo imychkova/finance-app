@@ -9,9 +9,10 @@ const CODE = 'test';
 const config = {
   categories: ['Їжа', 'Побутова хімія', 'Корм для тварин', 'Кава', 'Пальне', 'Авто', 'Інше'],
   sources: ['Готівка', 'monobank', 'Приват'],
-  people: ['Іра', 'Наречений'],
+  people: ['Я', 'Yasilda'],
 };
 const items = [];
+const plan = [];
 const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.webmanifest': 'application/manifest+json', '.png': 'image/png' };
 
 function reply(res, obj) {
@@ -42,6 +43,23 @@ http.createServer((req, res) => {
         const i = items.findIndex((x) => x.id === r.id);
         if (i < 0) return reply(res, { ok: false, error: 'not_found' });
         items.splice(i, 1);
+        return reply(res, { ok: true });
+      }
+      if (r.action === 'plan_list') return reply(res, { ok: true, items: plan });
+      if (r.action === 'plan_add') {
+        if (!plan.some((x) => x.id === r.item.id)) plan.push(r.item);
+        return reply(res, { ok: true, id: r.item.id });
+      }
+      if (r.action === 'plan_update') {
+        const i = plan.findIndex((x) => x.id === r.item.id);
+        if (i < 0) return reply(res, { ok: false, error: 'not_found' });
+        plan[i] = r.item;
+        return reply(res, { ok: true });
+      }
+      if (r.action === 'plan_delete') {
+        const i = plan.findIndex((x) => x.id === r.id);
+        if (i < 0) return reply(res, { ok: false, error: 'not_found' });
+        plan.splice(i, 1);
         return reply(res, { ok: true });
       }
       reply(res, { ok: false, error: 'unknown_action' });
