@@ -1,0 +1,39 @@
+name: Deploy Apps Script
+
+# Запускається лише коли змінюється код скрипта (або вручну з вкладки Actions).
+on:
+  push:
+    branches: [main]
+    paths: ['apps-script/**', '.github/workflows/deploy-apps-script.yml']
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-apps-script
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm i -g @google/clasp@3.4.1
+      - name: Налаштувати clasp
+        env:
+          CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+          SCRIPT_ID: ${{ secrets.SCRIPT_ID }}
+        run: |
+          umask 077
+          printf '%s' "$CLASPRC_JSON" > "$HOME/.clasprc.json"
+          printf '{"scriptId":"%s","rootDir":"apps-script"}' "$SCRIPT_ID" > .clasp.json
+      - name: Завантажити код
+        run: clasp push --force
+      - name: Оновити розгортання (адреса /exec не змінюється)
+        env:
+          DEPLOYMENT_ID: ${{ secrets.DEPLOYMENT_ID }}
+        run: clasp deploy --deploymentId "$DEPLOYMENT_ID" --description "CI ${GITHUB_SHA::7}"
