@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="uk">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0f766e">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Гроші">
+  <title>Наші гроші</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icon-180.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main id="app">
+    <!-- Перше підключення -->
+    <section id="view-setup" hidden>
+      <h1>Підключення</h1>
+      <p class="muted">Це робиться один раз на кожному пристрої.</p>
+      <form id="setup-form" autocomplete="off">
+        <label>Адреса API (Apps Script)
+          <input id="setup-url" type="url" required placeholder="https://script.google.com/macros/s/…/exec">
+        </label>
+        <label>Код доступу
+          <input id="setup-code" type="password" required>
+        </label>
+        <p id="setup-error" class="error" role="alert" hidden></p>
+        <button class="primary" type="submit">Підключитися</button>
+      </form>
+    </section>
+
+    <!-- Додавання / редагування -->
+    <section id="view-add" hidden>
+      <h1 id="add-title">Нова витрата</h1>
+      <form id="add-form" autocomplete="off">
+        <label class="amount">
+          <span class="sr">Сума, грн</span>
+          <input id="f-amount" type="text" inputmode="decimal" placeholder="0" required>
+          <span class="unit">грн</span>
+        </label>
+
+        <fieldset>
+          <legend>Категорія</legend>
+          <div id="f-category" class="chips"></div>
+        </fieldset>
+
+        <fieldset>
+          <legend>Звідки платили</legend>
+          <div id="f-source" class="seg"></div>
+        </fieldset>
+
+        <fieldset>
+          <legend>Хто</legend>
+          <div id="f-who" class="seg"></div>
+        </fieldset>
+
+        <div class="row">
+          <label>Дата <input id="f-date" type="date" required></label>
+          <label>Коментар <input id="f-note" type="text" maxlength="200" placeholder="необов'язково"></label>
+        </div>
+
+        <p id="add-error" class="error" role="alert" hidden></p>
+        <button class="primary" id="f-submit" type="submit">Додати</button>
+        <div id="edit-actions" class="row" hidden>
+          <button type="button" id="f-cancel">Скасувати</button>
+          <button type="button" id="f-delete" class="danger">Видалити</button>
+        </div>
+      </form>
+    </section>
+
+    <!-- Історія -->
+    <section id="view-history" hidden>
+      <h1>Історія</h1>
+      <p id="month-total" class="total"></p>
+      <p id="pending-note" class="muted" hidden></p>
+      <div id="history-list"></div>
+      <p id="history-empty" class="muted" hidden>Поки немає витрат.</p>
+    </section>
+  </main>
+
+  <nav id="tabs" hidden>
+    <button data-tab="add" class="active">Додати</button>
+    <button data-tab="history">Історія</button>
+  </nav>
+  <div id="toast" role="status" aria-live="polite" hidden></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
