@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Витрати monobank</title>
+<style>
+  :root { --bg:#f6f6f4; --card:#fff; --fg:#1d1d1b; --muted:#6b6b66; --line:#e2e2dd; --accent:#1f6f5c; --warn:#b4540a; --err:#b3261e; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#161615; --card:#201f1e; --fg:#efefea; --muted:#9a9a93; --line:#34332f; --accent:#5cc4a8; --warn:#e8a063; --err:#f2877f; } }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.4 system-ui,-apple-system,sans-serif; }
+  header { position:sticky; top:0; z-index:5; background:var(--card); border-bottom:1px solid var(--line); padding:10px 16px; display:flex; flex-wrap:wrap; gap:10px; align-items:center; }
+  header h1 { font-size:17px; margin:0 8px 0 0; }
+  .sp { flex:1; }
+  select, input[type=text], button { font:inherit; color:var(--fg); background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:6px 8px; }
+  button { cursor:pointer; }
+  button.primary { background:var(--accent); color:#fff; border-color:var(--accent); font-weight:600; }
+  button:disabled { opacity:.5; cursor:default; }
+  main { padding:12px 16px 80px; max-width:1200px; margin:0 auto; }
+  .info { color:var(--muted); margin:6px 0 12px; }
+  table { width:100%; border-collapse:collapse; background:var(--card); border:1px solid var(--line); border-radius:10px; overflow:hidden; }
+  th, td { padding:6px 8px; border-bottom:1px solid var(--line); text-align:left; vertical-align:middle; }
+  th { font-size:12px; color:var(--muted); font-weight:600; background:var(--bg); }
+  td.num { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
+  td.desc small { display:block; color:var(--muted); }
+  td.desc .reason { color:var(--warn); }
+  tr.off td { opacity:.55; }
+  tr.err td { background:color-mix(in srgb, var(--err) 12%, transparent); }
+  td input[type=text] { width:100%; min-width:140px; }
+  h2 { font-size:15px; margin:22px 0 8px; }
+  #msg { padding:8px 16px; }
+  .ok { color:var(--accent); } .bad { color:var(--err); }
+  @media (max-width:760px) { th:nth-child(7), td:nth-child(7) { display:none; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Витрати monobank</h1>
+  <label>з <input type="date" id="from"></label>
+  <label><input type="checkbox" id="all"> усі</label>
+  <span>Обрані:</span>
+  <select id="bulkWho"><option value="">Хто…</option></select>
+  <select id="bulkCat"><option value="">Категорія…</option></select>
+  <button id="bulkSkip" title="Більше ніколи не показувати">Пропускати завжди</button>
+  <span class="sp"></span>
+  <span id="sum"></span>
+  <button class="primary" id="push" disabled>Записати</button>
+</header>
+<div id="msg"></div>
+<main>
+  <div class="info" id="info">Завантаження…</div>
+  <table id="t"><thead><tr><th></th><th>Дата</th><th class="num">Сума</th><th>Опис</th><th>Категорія</th><th>Хто</th><th>Коментар</th></tr></thead><tbody id="rows"></tbody></table>
+  <h2 id="autoH" hidden>Пропущено автоматично (можна повернути галочкою)</h2>
+  <table id="t2" hidden><tbody id="rows2"></tbody></table>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+let state = { items: [], categories: [], people: [] };
+const FROM_DEFAULT = '2026-10-16';
+const vis = (i) => i.date >= $('from').value;
+const fmt = (n) => n.toLocaleString('uk-UA', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+
+function opt(sel, values, current) {
+  sel.textContent = '';
+  for (const v of values) { const o = document.createElement('option'); o.value = o.textContent = v; sel.appendChild(o); }
+  if (current) sel.value = current;
+}
+
+function row(it) {
+  const tr = document.createElement('tr');
+  tr.dataset.id = it.id;
+  const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = it.on; cb.title = 'Записати цю витрату';
+  cb.onchange = () => { it.on = cb.checked; update(); };
+  const sel = document.createElement('input'); sel.type = 'checkbox'; sel.title = 'Для масових змін'; sel.className = 'pick';
+  const td = (...c) => { const e = document.createElement('td'); c.forEach((x) => e.append(x)); return e; };
+  const cat = document.createElement('select'); opt(cat, state.categories, it.category); cat.onchange = () => { it.category = cat.value; };
+  const who = document.createElement('select'); opt(who, state.people, it.who); who.onchange = () => { it.who = who.value; };
+  const note = document.createElement('input'); note.type = 'text'; note.value = it.note || it.description; note.onchange = () => { it.note = note.value; };
+  const desc = td(it.description);
+  desc.className = 'desc';
+  const small = document.createElement('small');
+  small.textContent = 'MCC ' + it.mcc;
+  if (it.reason) { const r = document.createElement('span'); r.className = 'reason'; r.textContent = ' · ' + it.reason; small.append(r); }
+  desc.append(small);
+  const amt = td(fmt(it.amount)); amt.className = 'num';
+  tr.append(td(cb, document.createTextNode(' '), sel), td(it.date.slice(5).split('-').reverse().join('.')), amt, desc, td(cat), td(who), td(note));
+  it.el = { tr, cb, sel };
+  return tr;
+}
+
+function render() {
+  $('rows').textContent = ''; $('rows2').textContent = '';
+  const shown = state.items.filter(vis);
+  const main = shown.filter((i) => !i.auto), auto = shown.filter((i) => i.auto);
+  state.items.filter((i) => !vis(i)).forEach((i) => { i.el = { tr: document.createElement('tr'), sel: { checked: false } }; });
+  main.forEach((i) => $('rows').appendChild(row(i)));
+  auto.forEach((i) => $('rows2').appendChild(row(i)));
+  $('autoH').hidden = $('t2').hidden = !auto.length;
+  update();
+}
+
+function update() {
+  let n = 0, s = 0;
+  for (const i of state.items.filter(vis)) { if (i.on) { n++; s += i.amount; } i.el.tr.classList.toggle('off', !i.on); }
+  $('sum').textContent = n ? `${n} шт. · ${fmt(s)} грн` : '';
+  $('push').disabled = !n; $('push').textContent = n ? `Записати ${n}` : 'Записати';
+}
+
+const picked = () => state.items.filter((i) => vis(i) && i.el.sel.checked);
+
+async function load() {
+  const r = await fetch('/api/data'); const d = await r.json();
+  if (d.error) { $('info').textContent = d.error; $('info').className = 'info bad'; return; }
+  if (!$('from').value) $('from').value = FROM_DEFAULT;
+  state = { ...d, items: d.items.map((i) => ({ ...i, on: !i.auto })) };
+  opt($('bulkWho'), ['', ...d.people]); $('bulkWho').options[0].textContent = 'Хто…';
+  opt($('bulkCat'), ['', ...d.categories]); $('bulkCat').options[0].textContent = 'Категорія…';
+  const miss = d.missing.length ? ` ⚠️ У застосунку немає категорії: ${d.missing.join(', ')}. Додайте її в аркуші «Налаштування» (колонка «Категорії»), а поки що стоїть «Інше».` : '';
+  $('info').textContent = `Нових: ${d.items.filter((i) => !i.auto).length}. Дублів знято: ${d.dupes}.${miss} Позначте рядки (квадратик біля суми), щоб змінити «Хто» чи категорію одразу для всіх.`;
+  render();
+}
+
+$('from').onchange = () => { render(); };
+$('all').onchange = () => state.items.filter(vis).forEach((i) => { if (!i.auto) i.el.sel.checked = $('all').checked; });
+$('bulkWho').onchange = (e) => { const v = e.target.value; if (v) picked().forEach((i) => { i.who = v; i.el.tr.querySelectorAll('select')[1].value = v; }); e.target.value = ''; };
+$('bulkCat').onchange = (e) => { const v = e.target.value; if (v) picked().forEach((i) => { i.category = v; i.el.tr.querySelectorAll('select')[0].value = v; }); e.target.value = ''; };
+
+async function post(url, body) {
+  const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  return r.json();
+}
+
+$('bulkSkip').onclick = async () => {
+  const ids = picked().map((i) => i.id);
+  if (!ids.length) return;
+  if (!confirm(`Більше не показувати ${ids.length} витрат?`)) return;
+  await post('/api/skip', { ids });
+  state.items = state.items.filter((i) => !ids.includes(i.id)); render();
+};
+
+$('push').onclick = async () => {
+  const items = state.items.filter((i) => vis(i) && i.on).map(({ id, date, amount, category, who, note, description }) => ({ id, date, amount, category, who, note: note || description }));
+  $('push').disabled = true; $('msg').textContent = 'Записую…'; $('msg').className = '';
+  const r = await post('/api/push', { items });
+  if (r.error) { $('msg').textContent = r.error; $('msg').className = 'bad'; update(); return; }
+  const failed = new Set(r.errors.map((e) => e.id));
+  state.items = state.items.filter((i) => !(vis(i) && i.on) || failed.has(i.id)); render();
+  failed.forEach((id) => state.items.find((i) => i.id === id)?.el.tr.classList.add('err'));
+  $('msg').className = r.errors.length ? 'bad' : 'ok';
+  $('msg').textContent = `Записано: ${r.added}.` + (r.errors.length ? ` Помилки (${r.errors.length}): ${r.errors[0].error}` : '');
+};
+
+load().catch((e) => { $('info').textContent = String(e); });
+</script>
+</body>
+</html>
