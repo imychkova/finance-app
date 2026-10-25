@@ -39,7 +39,21 @@ function setup() {
 
 /** Меню «Фінанси» у таблиці: ручне оновлення зведення. */
 function onOpen() {
-  SpreadsheetApp.getUi().createMenu('Фінанси').addItem('Оновити зведення', 'rebuildSummaries').addToUi();
+  SpreadsheetApp.getUi().createMenu('Фінанси')
+    .addItem('Оновити зведення', 'rebuildSummaries')
+    .addItem('Відсортувати транзакції', 'sortTransactions')
+    .addToUi();
+}
+
+/** Транзакції: найновіші зверху (за датою, при однаковій даті — за часом створення). */
+function sortTransactions() {
+  const sh = txSheet_();
+  const n = sh.getLastRow() - 1;
+  if (n < 2) return;
+  sh.getRange(2, 1, n, TX_HEADERS.length).sort([
+    { column: COL.DATE, ascending: false },
+    { column: COL.CREATED, ascending: false },
+  ]);
 }
 
 function setupTransactions_(ss) {
@@ -317,6 +331,7 @@ function addTx_(item) {
   const sh = txSheet_();
   const row = sh.getLastRow() + 1;
   sh.getRange(row, 1, 1, TX_HEADERS.length).setValues([rowValues_(id, v, new Date())]);
+  sortTransactions();
   refreshSummaries_();
   return { ok: true, id: id };
 }
@@ -328,6 +343,7 @@ function updateTx_(item) {
   const sh = txSheet_();
   const created = sh.getRange(row, COL.CREATED).getValue();
   sh.getRange(row, 1, 1, TX_HEADERS.length).setValues([rowValues_(item.id, v, created)]);
+  sortTransactions();
   refreshSummaries_();
   return { ok: true, id: item.id };
 }
