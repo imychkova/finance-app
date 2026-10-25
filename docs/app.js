@@ -1,7 +1,7 @@
 'use strict';
 
 // Налаштування підключення зберігаються лише в цьому браузері (не в коді).
-const LS = { url: 'fa.url', code: 'fa.code', who: 'fa.who', source: 'fa.source', pending: 'fa.pending', config: 'fa.config' };
+const LS = { url: 'fa.url', code: 'fa.code', who: 'fa.who', source: 'fa.source', pending: 'fa.pending', config: 'fa.config', filter: 'fa.filter' };
 
 const $ = (id) => document.getElementById(id);
 const store = {
@@ -11,7 +11,7 @@ const store = {
 };
 const readJson = (k, fallback) => { try { return JSON.parse(store.get(k)) || fallback; } catch (e) { return fallback; } };
 
-const state = { config: null, items: [], plan: [], form: { category: null, source: null, who: null }, editing: null };
+const state = { filter: store.get(LS.filter) || '', config: null, items: [], plan: [], form: { category: null, source: null, who: null }, editing: null };
 
 // ---------- API ----------
 
@@ -262,16 +262,38 @@ async function loadHistory() {
   renderHistory(list);
 }
 
+function renderHistoryFilter() {
+  const box = $('history-filter');
+  box.textContent = '';
+  const people = state.config ? state.config.people : [];
+  if (people.length < 2) return;
+  if (state.filter && people.indexOf(state.filter) < 0) state.filter = '';
+  ['', ...people].forEach((name) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = name || 'Усі';
+    b.setAttribute('aria-pressed', String((state.filter || '') === name));
+    b.addEventListener('click', () => {
+      state.filter = name;
+      store.set(LS.filter, name);
+      renderHistory($('history-list'));
+    });
+    box.appendChild(b);
+  });
+}
+
 function renderHistory(list) {
   list.textContent = '';
+  renderHistoryFilter();
   const queued = readJson(LS.pending, []);
-  const all = queued.map((x) => Object.assign({ queued: true }, x)).concat(state.items);
+  const byWho = (x) => !state.filter || x.who === state.filter;
+  const all = queued.map((x) => Object.assign({ queued: true }, x)).concat(state.items).filter(byWho);
   $('history-empty').hidden = all.length > 0;
   $('pending-note').hidden = !queued.length;
   $('pending-note').textContent = queued.length ? 'У черзі на відправку: ' + queued.length : '';
 
   const month = today().slice(0, 7);
-  const total = state.items.filter((x) => x.date.startsWith(month)).reduce((s, x) => s + x.amount, 0);
+  const total = state.items.filter(byWho).filter((x) => x.date.startsWith(month)).reduce((s, x) => s + x.amount, 0);
   $('month-total').textContent = 'Цього місяця: ' + fmtMoney(total);
 
   let lastDay = null;

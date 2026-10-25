@@ -1,5 +1,5 @@
 // Кешуємо лише оболонку застосунку. Запити до API (інший домен) не чіпаємо.
-const CACHE = 'finance-app-v2';
+const CACHE = 'finance-app-v3';
 const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'manifest.webmanifest', 'icon.svg'];
 
 self.addEventListener('install', (e) => {

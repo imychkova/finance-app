@@ -160,3 +160,4 @@ button.danger { color: var(--danger); }
 .plan-row.done .plan-text { text-decoration: line-through; color: var(--muted); }
 .plan-del { flex: none; width: 40px; height: 40px; font: inherit; font-size: 1.4rem; color: var(--danger); background: none; border: 0; cursor: pointer; }
 .plan-add { margin: 4px 0 12px; }
+.filter { margin-bottom: 12px; }
